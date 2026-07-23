@@ -1,0 +1,22 @@
+# RS-LinkFusion QoS設定サンプル。
+# `rs-linkfusion gateway-serve --qos-config qos.toml`のように渡す
+# (`--qos-config default`なら本ファイルを使わず内蔵プリセットを使う)。
+
+# このサフィックスに一致するホスト名(DNS応答スヌーピングで検出)への
+# 通信を帯域制限の対象とする。
+streaming_suffixes = [
+    "netflix.com",
+    "nflxvideo.net",
+    "unext.jp",
+    "youtube.com",
+    "googlevideo.com",
+    "spotify.com",
+    "qobuz.com",
+    "music.apple.com",
+    "amazonvideo.com",
+    "hulu.com",
+]
+
+# ストリーミング判定されたトラフィックの帯域上限(Mbps)。
+# それ以外のダウンロード/アップロードは無制限(ボンディング接続の実効速度まで)。
+streaming_rate_mbps = 10.0
