@@ -1,0 +1,88 @@
+# PORTING.md — お引越し可能ファイル
+
+他のプロジェクトへそのまま(または軽微な変更で)移植できる実装パターン
+一覧。
+
+## `aggligator`によるユーザー空間マルチホーミング(`src/main.rs`)
+
+`aggligator-transport-tcp::simple::{tcp_connect, tcp_server}`は、
+`TcpConnector::set_multi_interface(true)`(デフォルト有効)により
+ローカルの全ネットワークインターフェースを自動列挙し、各インター
+フェース×各サーバーIPごとに個別TCPリンクを張って1つの論理接続へ
+束ねる。カーネルMPTCP/SCTPが使えない環境(Windows等)でも同じ目的
+(物理経路の冗長化・帯域合算)をユーザー空間で実現できる、実績のある
+パターン(`open-web-server-wire::mptcp_channel`が原型)。
+
+```rust
+use aggligator_transport_tcp::simple as agg_tcp;
+
+// サーバー側
+agg_tcp::tcp_server(bind_addr, |stream| async move {
+    // streamは AsyncRead + AsyncWrite を実装する束ねられた論理接続
+}).await?;
+
+// クライアント側
+let stream = agg_tcp::tcp_connect(["server.example.com".to_string()], 5900).await?;
+```
+
+## 長さプレフィクス付き圧縮+暗号化フレームプロトコル(`src/framed.rs`)
+
+`[len:u32 LE][圧縮+暗号化済みペイロード]`という単純な形式で、任意の
+`AsyncRead`/`AsyncWrite`ストリーム上に任意サイズのメッセージを安全に
+送受信する最小実装。トンネル・RPC・ミニVPN等、ストリーム型プロトコル
+の上に「1メッセージ単位の圧縮+暗号化された往復」が必要などんな場面
+にも移植できる。
+
+```rust
+pub async fn write_frame<W: AsyncWrite + Unpin>(
+    writer: &mut W, accel: &PayloadAccelerator, plaintext: &[u8],
+) -> anyhow::Result<()> {
+    let sealed = accel.seal(plaintext)?;
+    let len = (sealed.len() as u32).to_le_bytes();
+    writer.write_all(&len).await?;
+    writer.write_all(&sealed).await?;
+    writer.flush().await?;
+    Ok(())
+}
+```
+
+## 圧縮+暗号化ハードウェアアクセラレータ抽象化(`src/accel.rs`、移植元:
+`open-web-server-wire::accel`、同パターンを自己完結で再実装)
+
+`AccelBackend`列挙型で将来のハードウェア(GPU/NPU/専用アクセラレータ)
+をAPI形状として先取りし、未実装のバックエンドが要求されてもpanicせず
+`Cpu`へ安全にフォールバックしつつ`tracing::warn!`で可視化する設計。
+呼び出し側のコードを変えずに将来ハードウェアが実装された時にそのまま
+差し替わる。独立配布物(ダウンロードしてすぐ動く単体バイナリ)にする
+場合は、この`open-web-server`への依存を持たせない自己完結実装のまま
+コピーするのが移植コスト最小。
+
+```rust
+pub fn new(backend: AccelBackend, key: &[u8; 32]) -> Self {
+    let effective = match backend {
+        AccelBackend::Cpu => AccelBackend::Cpu,
+        other => {
+            tracing::warn!(requested = ?other, "accelerator backend not yet implemented, falling back to Cpu");
+            AccelBackend::Cpu
+        }
+    };
+    Self { backend: effective, cipher: ChaCha20Poly1305::new(Key::from_slice(key)) }
+}
+```
+
+## ボンディング接続とローカルTCP接続の双方向リレー(`src/main.rs::relay`)
+
+`tokio::io::split`で1本のストリーム(ボンディング接続)を読み書き
+半分に分け、`tokio::try_join!`で双方向コピーを並行実行するパターン。
+片方が`AsyncRead+AsyncWrite`を実装する任意のトンネル層、もう片方が
+平文ローカルソケットという構図であれば、SSH的なポートフォワード・
+リバースプロキシ全般にそのまま移植できる。
+
+```rust
+let (mut local_rd, mut local_wr) = local.into_split();
+let (mut agg_rd, mut agg_wr) = tokio::io::split(agg_stream);
+
+let to_agg = async { /* local_rd → framed::write_frame → agg_wr */ };
+let to_local = async { /* framed::read_frame ← agg_rd → local_wr */ };
+tokio::try_join!(to_agg, to_local)?;
+```

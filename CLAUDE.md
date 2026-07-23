@@ -1,11 +1,11 @@
-# 開発方針・設計書(RS-LinkFusion) — 2026-07-23時点、実装未検証
+# 開発方針・設計書(RS-LinkFusion) — 2026-07-23時点、コアロジック実装・実機検証済み
 
-> ⚠️ **正直な開示(最重要)**: このファイルは**設計書**であり、
-> `src/`配下のRustコードは書き上げた段階で`cargo build`/`cargo test`
-> による検証を行えていない(リミット接近のため中断)。次回セッションで
-> 必ず最初に実施すること: `cargo test`を実行し、コンパイルエラー・
-> テスト失敗を修正してから先へ進む(型チェックのみで「完了」と
-> 報告しないという、このエコシステム共通の方針を厳守)。
+> ⚠️ **正直な開示**: 前回セッションはリミット接近で`cargo build`/
+> `cargo test`未検証のまま中断していたが、本セッションで検証・
+> `main.rs`実装・実データ転送の実機検証まで完了した(詳細は
+> HANDOFF参照)。GUI/サービス化・macOS/Android/iOS対応は引き続き
+> 未着手(ユーザー確認済みのスコープ、下記「対応プラットフォーム」
+> 節参照)。
 
 作業ドライブは`F:\runo`。この節は[`open-raid-z`](https://github.com/aon-co-jp/open-raid-z)の
 `CLAUDE.md`を正本とし、各プロジェクトへコピーして同期する方針に準じる。
@@ -100,27 +100,76 @@ CPUバックエンドのみを実装。
 
 ## 未実装・次回セッションで最優先すべきこと
 
-1. **`cargo build`/`cargo test`の実行**(最優先、型チェックのみで
-   「完了」と報告しない方針の徹底)。`accel.rs`/`framed.rs`/
-   `quality.rs`は実装済みだが未検証。
-2. `main.rs`(CLIエントリポイント、`serve`/`connect`サブコマンド)の
-   実装——現状は`src/`に個別モジュールがあるのみで、これらを束ねる
-   `main.rs`自体が未作成。
-3. 実際に複数インターフェースを持つマシンでの実機検証(この開発
-   環境がループバックのみか複数NICを持つかの確認を含む)。
-4. `install.sh`(Linux、`RS-Guard`/`RS-Ops`の既存パターンを踏襲)・
-   `install.ps1`(Windows)の作成。
-5. GitHub Releases経由でのビルド済みバイナリ配布(タグpushで
-   Linux/Windows向け自動ビルド、既存の`.github/workflows/release.yml`
-   パターンを踏襲)。
-6. README.md/PORTING.mdの作成(現状CLAUDE.mdのみ)。
+1. ~~`cargo build`/`cargo test`の実行~~ **完了(2026-07-23)**。
+2. ~~`main.rs`の実装~~ **完了(2026-07-23)**。
+3. **実際に複数インターフェースを持つマシンでの実機検証**は未着手
+   (この開発環境がループバックのみか複数NICを持つかの確認を含む)。
+   ループバック上でのserve/connect実データ転送検証は完了済み
+   (下記HANDOFF参照)——複数物理NICでの真のマルチホーミング効果
+   自体はこのサンドボックスでは検証できていない、という正直な限界。
+4. ~~`install.sh`/`install.ps1`の作成~~ **完了(2026-07-23)**。
+5. ~~GitHub Releases自動ビルドワークフロー~~ **完了(2026-07-23、
+   `.github/workflows/release.yml`)**。タグpushでの実リリース動作
+   自体は未検証。
+6. ~~README.md/PORTING.mdの作成~~ **完了(2026-07-23)**。
+7. **次に優先すべきこと**: (a) タグpush(`v0.1.0`等)による
+   `release.yml`の実動作確認、(b) 複数物理NIC環境での実機検証、
+   (c) GUI/サービス化(今回スコープ外、ユーザー確認済み)。
+
+## HANDOFF
+
+- **2026-07-23 コアロジック実装・実機検証完了**: 前回セッションが
+  リミット接近で中断していた`cargo build`/`cargo test`未検証状態を
+  解消。
+  1. `cargo build`成功(警告2件のみ、`AccelBackend`の未実装
+     バリアント`Gpu`/`Npu`/`HardwareAccelerator`が未使用という
+     dead_code警告——`open-web-server-wire::accel`と同じ設計上
+     意図的な未使用のため実害なし)。
+  2. `cargo test`で既存5件(accel 3件・framed 2件)全green。
+  3. `main.rs`を新規実装。`clap`で`generate-key`/`serve`/`connect`の
+     3サブコマンドを提供。`serve`は`aggligator_transport_tcp::simple::
+     tcp_server`でボンディング接続を受け付けローカルターゲットへ
+     `TcpStream::connect`、`connect`は`tokio::net::TcpListener`で
+     ローカル待受し、接続ごとに`simple::tcp_connect`でボンディング
+     接続を新規に張る。両者とも`tokio::io::split`+`tokio::try_join!`
+     による双方向リレー(`relay()`関数、`framed::write_frame`/
+     `read_frame`でボンディング側を圧縮+暗号化)。鍵は64桁hex文字列
+     で`serve`/`connect`双方に手動で渡す設計(`generate-key`
+     サブコマンドで生成)。
+  4. **実機検証(型チェックのみで完了と報告しない方針の徹底)**:
+     Python製ループ型echoサーバー(127.0.0.1:9402)を用意し、
+     `rs-linkfusion serve --bind 127.0.0.1:9501 --target 127.0.0.1:9402`
+     と`rs-linkfusion connect --listen 127.0.0.1:9601 --remote 127.0.0.1
+     --remote-port 9501`を実際に起動、ループバック上で実際に
+     `aggligator`のリンクテスト(ping計測含む)が完了することを
+     デバッグログで確認した上で、connect側のローカルポート
+     (127.0.0.1:9601)へPythonクライアントから400バイト送信し、
+     serve側経由でechoサーバーへ到達・折り返され、connect側から
+     送信時と**完全に一致する400バイトが実際に返ってくる**ことを
+     実TCPソケットで確認(`received 400 bytes / match: True`)。
+     圧縮+暗号化フレーム化・ボンディング接続経由の往復・復号+解凍が
+     実際に機能することを実証した。
+     **正直な限界**: この開発環境はループバック(単一の仮想
+     インターフェース「Loopback Pseudo-Interface 1」)のみのため、
+     複数物理NICでの真のマルチホーミング効果自体は検証できていない
+     (`aggligator`側のログでも単一インターフェースのみが列挙されて
+     いることを確認済み)。
+  5. `README.md`/`PORTING.md`を新規作成(3点セットが揃った)。
+  6. `install.sh`/`install.ps1`を`open-web-server`の既存パターンから
+     移植(サービスはTCP転送方式のため、環境変数ではなく
+     `ExecStart`のコマンドライン引数でserve/connectを切り替える形に
+     調整)。
+  7. `.github/workflows/release.yml`を`open-web-server`の既存パターンから
+     移植(タグpushでLinux/Windows向けバイナリ自動ビルド)。
+     タグpushによる実リリース動作自体は未検証(次回優先事項)。
+  - 次にすべきこと: 上記「未実装・次回セッションで最優先すべきこと」
+    節を参照。
 
 ## 関連プロジェクト
 
 - [open-raid-z](https://github.com/aon-co-jp/open-raid-z) — 開発ルールの正本。
 - [RS-SmartTCP](https://github.com/aon-co-jp/RS-SmartTCP) — ネットワーク品質適応制御の利用元。
-- [open-web-server](https://github.com/aon-co-jp/open-web-server) — `accel.rs`/`mptcp_channel.rs`と同じ設計パターンの原型。
-- [RS-Guard](https://github.com/aon-co-jp/RS-Guard) — インストーラー(install.sh/install.ps1)パターンの参照元。
+- [open-web-server](https://github.com/aon-co-jp/open-web-server) — `accel.rs`/`mptcp_channel.rs`と同じ設計パターンの原型。install.sh/install.ps1/release.ymlの参照元。
 
 ## エコシステム全体マップ
 
