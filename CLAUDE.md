@@ -138,6 +138,13 @@ CPUバックエンドのみを実装。
 
 ## HANDOFF
 
+- **2026-07-23 GPU バックエンドの実装完了と今後の拡張方針**:
+  - `opencuda-directx`（DirectX 12）バックエンドを `AccelBackend::Gpu` に統合し、ChaCha20 暗号化を GPU オフロード可能にした。
+  - 実機検証の結果、GT730（DirectX 11.1 世代）では DirectX 12 非対応のため `backend=Cpu` にフォールバックすることが確認された。
+  - しかし、GT730 は Vulkan 1.0 に対応しているため、`opencuda-vulkan` バックエンドを追加することで GPU 加速が可能になる見込み。
+  - **今後の拡張ロードマップ**: Vulkan バックエンド対応を正式に検討する。具体的には `AccelBackend::Vulkan` を追加し、`opencuda-vulkan` の ChaCha20 カーネル（SPIR-V）を実装する。
+  - **現状の運用**: CPU フォールバック（`backend=Cpu`）で完全に動作するため、Vulkan 対応は必須ではないが、GT730 ユーザーのパフォーマンス向上に寄与する。
+
 - **2026-07-23(続き) TUNゲートウェイ・QoS・速度測定・GUI・自動再接続を
   追加(ユーザー指示、複数回にわたる追加要望を反映)**:
   1. **TUN仮想アダプタ方式のフルVPNゲートウェイ**(`src/tun_gateway.rs`、

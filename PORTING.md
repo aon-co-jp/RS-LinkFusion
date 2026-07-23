@@ -86,3 +86,12 @@ let to_agg = async { /* local_rd → framed::write_frame → agg_wr */ };
 let to_local = async { /* framed::read_frame ← agg_rd → local_wr */ };
 tokio::try_join!(to_agg, to_local)?;
 ```
+### ハードウェアアクセラレータのフォールバックパターン（移植時の重要な教訓）
+
+`accel.rs` の `PayloadAccelerator::new()` は、要求されたバックエンド（`AccelBackend::Gpu`）が利用できない場合に **自動的に CPU にフォールバック** する設計です。  
+このパターンは、移植先の環境が GPU をサポートしていない場合でもアプリケーションが継続して動作することを保証します。
+
+**移植時の注意**：
+- GPU バックエンドを追加する場合、必ず `cfg(feature = "...")` で条件コンパイルし、フォールバック経路を用意してください。
+- DirectX 12 非対応 GPU（例：GT730）では、Vulkan バックエンドが代替候補になります。本エコシステムでは将来の拡張として Vulkan 対応を予定しています。
+```
