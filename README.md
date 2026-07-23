@@ -2,12 +2,6 @@
 
 **開発開始日: 2026-07-23**(このリポジトリのGitHub作成日)
 
-
-- **GPU アクセラレーション（Vulkan 対応検討中）**:
-  現在、GPU バックエンドは DirectX 12 に対応しています。ただし、GT730 のような DirectX 12 非対応 GPU では CPU フォールバック（`backend=Cpu`）で動作します。  
-  GT730 は Vulkan 1.0 に対応しているため、将来のアップデートで Vulkan バックエンドを追加し、より多くの GPU で高速化を実現する予定です（ロードマップ項目）。
-
-
 複数のWAN/LAN/WiFi(古い規格〜WiFi 7まで、OSがネットワークインター
 フェースとして認識するものはすべて対象)を1つの論理接続へ束ね
 (ボンディング)、通信の高速化・安定化を実現するアプリ。ポート単位の
@@ -49,10 +43,14 @@ gate02・osakagasは非公式サイトのため自動化しておらず、手動
   の適応バックオフ(実測RTT/ジッターに応じてFast/Slow切替)で自動的に
   再接続を試み続ける。
 - **CPU/GPU/NPU/専用ハードウェアアクセラレータの抽象化**: `AccelBackend`
-  列挙型(`Cpu`/`Gpu`/`Npu`/`HardwareAccelerator`)で将来のハードウェア
-  をAPI形状として先取りし、現状`Cpu`のみ実装(`flate2`圧縮+
-  ChaCha20-Poly1305暗号化)、他は要求時に安全に`Cpu`へフォールバック
-  する。GPU/NPU実装は調査済みだが未着手(下記「正直な開示」参照)。
+  列挙型(`Cpu`/`Gpu`/`Npu`/`HardwareAccelerator`)。`Cpu`は`flate2`圧縮+
+  ChaCha20-Poly1305暗号化。`Gpu`(`gpu` feature、Windows専用)は
+  [open-cuda](https://github.com/aon-co-jp/open-cuda)の`opencuda-directx`
+  (DirectX 12 Compute)経由でChaCha20暗号化のみGPU実行し、認証タグ
+  (Poly1305)はCPU側で計算してAEAD全体の改ざん耐性をCPUバックエンドと
+  同等に保つ(`accel.rs`参照)。`--accel cpu`/`--accel gpu`で選択可能、
+  GPU初期化に失敗した場合は安全に`Cpu`へフォールバックする。`Npu`/
+  `HardwareAccelerator`は未実装の拡張点。
 - **トンネル方式**: `[len:u32 LE][圧縮+暗号化済みペイロード]`という
   長さプレフィクスフレームで、ボンディング接続上にトラフィックを流す。
   `serve`/`connect`は固定1アドレスへのポート転送、`gateway-serve`/
@@ -140,6 +138,34 @@ rs-linkfusion speedtest history
 rs-linkfusion speedtest prune --older-than-days 90
 ```
 
+## GPUアクセラレーション(`--accel gpu`、Windows専用)
+
+暗号化(ChaCha20部分)を[open-cuda](https://github.com/aon-co-jp/open-cuda)の
+`opencuda-directx`(DirectX 12 Compute)へオフロードできる。認証タグ
+(Poly1305)は常にCPU側で計算するため、CPUバックエンドと同等の改ざん
+耐性を持つ(`accel.rs`参照)。
+
+```bash
+cargo build --features gpu
+```
+
+DXILシェーダー(`chacha20.dxil`)はビルド成果物のためこのリポジトリには
+含まれない。`open-cuda`側でコンパイルし、実行ファイルと同じディレクトリの
+`shaders/chacha20.dxil`へ配置する(`install.ps1`は同梱時に自動コピーする):
+
+```powershell
+cd ..\open-cuda
+.\tools\compile-dx12-shaders.ps1
+Copy-Item crates\opencuda-directx\shaders\chacha20.dxil ..\RS-LinkFusion\shaders\ -Force
+```
+
+```bash
+rs-linkfusion serve --bind 0.0.0.0:5900 --target 127.0.0.1:8080 --key <鍵> --accel gpu
+```
+
+GPU初期化やDXILシェーダーの読み込みに失敗した場合は、警告ログを出した
+うえで安全に`Cpu`へフォールバックする。
+
 ## GUI
 
 ```bash
@@ -154,13 +180,16 @@ rs-linkfusion gui
 
 - 個々の物理リンク単位の内訳ではなく、ボンディングされた論理接続
   全体の実効品質という単純化を採用している(`quality.rs`)。
-- **GPU/NPUアクセラレーションは未実装**。関連リポジトリ`open-cuda`
-  (GPU抽象化基盤)を調査したが、現状はVulkan Compute基盤でML専用
-  カーネル(GEMM/Attention等)のみを持ち、圧縮・暗号化カーネルは
-  存在しないため転用できない。トンネル1フレームは小サイズ(MTU程度)
-  のため、Host↔Device間の転送オーバーヘッドがGPU側の演算優位性を
-  相殺し実利益が出ない可能性がある、という技術的懸念も判明している
-  (詳細は`open-cuda`側`CLAUDE.md`のHANDOFF参照)。
+- **GPUアクセラレーション(`--accel gpu`)は実装済み・実機検証済み**
+  (`open-cuda`の`opencuda-directx`、DirectX 12 Compute)。このマシンの
+  NVIDIA GeForce GT 730(Kepler世代、DirectX 12 Feature Level 11_0
+  対応——「DirectX 12非対応」ではない)で、実際のGPUディスパッチと
+  CPU参照実装(`chacha20poly1305`crate)との出力完全一致を検証済み
+  (`accel.rs`のテスト参照)。**ただし**トンネル1フレームは小サイズ
+  (MTU程度)のため、Host↔Device間の転送オーバーヘッドがGPU側の
+  演算優位性を相殺し実利益が出ない可能性がある、という性能上の懸念
+  は未検証のまま(正しさは検証済みだが、速度面でCPUより有利かどうか
+  のベンチマークは今後の課題)。NPU/専用ハードウェアは未実装。
 - **QoSのサービス分類はDNS応答スヌーピングによるベストエフォート**。
   CDN・エニーキャストIPは複数サービスで共有されることがあるため、
   分類の精度は完全ではない(`qos.rs`参照)。

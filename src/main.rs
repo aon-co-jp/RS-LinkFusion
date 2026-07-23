@@ -57,6 +57,15 @@ fn load_qos(qos_config: Option<&str>) -> Result<Option<Arc<qos::Qos>>> {
     }
 }
 
+/// `--accel`引数文字列を`AccelBackend`へ変換する。
+fn parse_accel_backend(s: &str) -> Result<AccelBackend> {
+    match s.to_lowercase().as_str() {
+        "cpu" => Ok(AccelBackend::Cpu),
+        "gpu" => Ok(AccelBackend::Gpu),
+        other => anyhow::bail!("不明な --accel 値: {other}(cpu または gpu を指定してください)"),
+    }
+}
+
 const CHUNK_SIZE: usize = 16 * 1024;
 
 #[derive(Parser)]
@@ -89,6 +98,11 @@ enum Command {
         /// `generate-key`で生成したhex鍵
         #[arg(long, env = "RS_LINKFUSION_KEY")]
         key: String,
+        /// 圧縮+暗号化のアクセラレータバックエンド(cpu/gpu)。gpuは`gpu`
+        /// feature必須、GPU初期化に失敗した場合は安全にcpuへフォール
+        /// バックする。
+        #[arg(long, env = "RS_LINKFUSION_ACCEL", default_value = "cpu")]
+        accel: String,
     },
     /// ローカル側: ローカルポートで待ち受け、ボンディング接続へ転送する。
     ///
@@ -106,6 +120,11 @@ enum Command {
         /// `generate-key`で生成したhex鍵(`serve`側と同じ値)
         #[arg(long, env = "RS_LINKFUSION_KEY")]
         key: String,
+        /// 圧縮+暗号化のアクセラレータバックエンド(cpu/gpu)。`serve`側と
+        /// 同じ値を指定する必要はない(通信路の暗号化とは独立、双方が
+        /// それぞれ自分のフレームを自分の設定で処理する)。
+        #[arg(long, env = "RS_LINKFUSION_ACCEL", default_value = "cpu")]
+        accel: String,
     },
     /// TUNゲートウェイ・リモート側(典型的にはLinux VPS)。IPフォワーディング/
     /// NAT(MASQUERADE)の有効化は自動で行わない(README.md参照、手動設定が必要)。
@@ -130,6 +149,12 @@ enum Command {
         /// 主要な動画/音楽配信サービスの内蔵プリセットを使う。
         #[arg(long, env = "RS_LINKFUSION_QOS_CONFIG")]
         qos_config: Option<String>,
+        /// 圧縮+暗号化のアクセラレータバックエンド(cpu/gpu)。QoSで
+        /// 帯域制限される「高音質」トラフィックと、無制限の「高速」
+        /// トラフィックの両方に同じバックエンドが使われる(GPU暗号化の
+        /// 恩恵はどちらの層にも及ぶ、ユーザー選択制)。
+        #[arg(long, env = "RS_LINKFUSION_ACCEL", default_value = "cpu")]
+        accel: String,
     },
     /// TUNゲートウェイ・ローカル側(Windows等)。管理者権限、Windowsでは
     /// `wintun.dll`が実行ファイルと同じディレクトリに必要(README.md参照)。
@@ -157,6 +182,9 @@ enum Command {
         /// `default`で主要な動画/音楽配信サービスの内蔵プリセットを使う。
         #[arg(long, env = "RS_LINKFUSION_QOS_CONFIG")]
         qos_config: Option<String>,
+        /// 圧縮+暗号化のアクセラレータバックエンド(cpu/gpu)。
+        #[arg(long, env = "RS_LINKFUSION_ACCEL", default_value = "cpu")]
+        accel: String,
     },
     /// ネット速度測定(M-Lab/ndt7)・自動記録・履歴管理。
     SpeedTest {
@@ -235,23 +263,27 @@ async fn main() -> Result<()> {
             let key = PayloadAccelerator::generate_key();
             println!("{}", encode_hex(&key));
         }
-        Command::Serve { bind, target, key } => {
+        Command::Serve { bind, target, key, accel } => {
             let key = decode_hex_key(&key)?;
-            run_serve(bind, target, key).await?;
+            let accel = parse_accel_backend(&accel)?;
+            run_serve(bind, target, key, accel).await?;
         }
-        Command::Connect { listen, remote, remote_port, key } => {
+        Command::Connect { listen, remote, remote_port, key, accel } => {
             let key = decode_hex_key(&key)?;
-            run_connect(listen, remote, remote_port, key).await?;
+            let accel = parse_accel_backend(&accel)?;
+            run_connect(listen, remote, remote_port, key, accel).await?;
         }
-        Command::GatewayServe { bind, tun_addr, tun_prefix, mtu, key, qos_config } => {
+        Command::GatewayServe { bind, tun_addr, tun_prefix, mtu, key, qos_config, accel } => {
             let key = decode_hex_key(&key)?;
             let qos = load_qos(qos_config.as_deref())?;
-            run_gateway_serve(bind, tun_addr, tun_prefix, mtu, key, qos).await?;
+            let accel = parse_accel_backend(&accel)?;
+            run_gateway_serve(bind, tun_addr, tun_prefix, mtu, key, qos, accel).await?;
         }
-        Command::GatewayConnect { remote, remote_port, tun_addr, tun_prefix, mtu, key, qos_config } => {
+        Command::GatewayConnect { remote, remote_port, tun_addr, tun_prefix, mtu, key, qos_config, accel } => {
             let key = decode_hex_key(&key)?;
             let qos = load_qos(qos_config.as_deref())?;
-            run_gateway_connect(remote, remote_port, tun_addr, tun_prefix, mtu, key, qos).await?;
+            let accel = parse_accel_backend(&accel)?;
+            run_gateway_connect(remote, remote_port, tun_addr, tun_prefix, mtu, key, qos, accel).await?;
         }
         Command::SpeedTest { command } => run_speedtest_command(command).await?,
         Command::Gui => {
@@ -308,8 +340,8 @@ async fn run_speedtest_command(command: SpeedTestCommand) -> Result<()> {
     Ok(())
 }
 
-async fn run_serve(bind: SocketAddr, target: SocketAddr, key: [u8; 32]) -> Result<()> {
-    let accel = Arc::new(PayloadAccelerator::new(AccelBackend::Cpu, &key));
+async fn run_serve(bind: SocketAddr, target: SocketAddr, key: [u8; 32], accel_backend: AccelBackend) -> Result<()> {
+    let accel = Arc::new(PayloadAccelerator::new(accel_backend, &key));
     tracing::info!(%bind, %target, backend = ?accel.backend(), "starting bonded tunnel server");
 
     agg_tcp::tcp_server(bind, move |stream| {
@@ -335,9 +367,11 @@ async fn handle_serve_connection(
     relay(agg_stream, local, accel).await
 }
 
-async fn run_connect(listen: SocketAddr, remote_hosts: Vec<String>, remote_port: u16, key: [u8; 32]) -> Result<()> {
+async fn run_connect(
+    listen: SocketAddr, remote_hosts: Vec<String>, remote_port: u16, key: [u8; 32], accel_backend: AccelBackend,
+) -> Result<()> {
     let listener = tokio::net::TcpListener::bind(listen).await.context("binding local listen address")?;
-    let accel = Arc::new(PayloadAccelerator::new(AccelBackend::Cpu, &key));
+    let accel = Arc::new(PayloadAccelerator::new(accel_backend, &key));
     tracing::info!(%listen, ?remote_hosts, remote_port, backend = ?accel.backend(), "starting bonded tunnel client");
 
     loop {
@@ -368,8 +402,9 @@ async fn run_gateway_serve(
     mtu: u16,
     key: [u8; 32],
     qos: Option<Arc<qos::Qos>>,
+    accel_backend: AccelBackend,
 ) -> Result<()> {
-    let accel = Arc::new(PayloadAccelerator::new(AccelBackend::Cpu, &key));
+    let accel = Arc::new(PayloadAccelerator::new(accel_backend, &key));
     let tun = tun_gateway::create_tun_device(tun_addr, tun_prefix, mtu)?;
     tracing::info!(%bind, %tun_addr, tun_prefix, mtu, backend = ?accel.backend(), qos_enabled = qos.is_some(), "starting TUN gateway server");
 
@@ -411,8 +446,9 @@ async fn run_gateway_connect(
     mtu: u16,
     key: [u8; 32],
     qos: Option<Arc<qos::Qos>>,
+    accel_backend: AccelBackend,
 ) -> Result<()> {
-    let accel = Arc::new(PayloadAccelerator::new(AccelBackend::Cpu, &key));
+    let accel = Arc::new(PayloadAccelerator::new(accel_backend, &key));
     let tun = tun_gateway::create_tun_device(tun_addr, tun_prefix, mtu)?;
     let quality = Arc::new(QualityTracker::new());
     tracing::info!(?remote, remote_port, %tun_addr, tun_prefix, mtu, backend = ?accel.backend(), qos_enabled = qos.is_some(), "starting TUN gateway client (auto-reconnect enabled)");

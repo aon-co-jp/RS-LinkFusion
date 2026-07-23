@@ -23,6 +23,22 @@ if (-not (Test-Path $BinSrc)) {
 }
 Copy-Item $BinSrc -Destination $InstallDir -Force
 
+# TUNゲートウェイ(gateway-serve/gateway-connect)に必要なwintun.dll。
+# zip同梱時のみコピー(README.md参照、https://wintun.net/ から別途取得)。
+$WintunSrc = Join-Path $PSScriptRoot "wintun.dll"
+if (Test-Path $WintunSrc) {
+    Copy-Item $WintunSrc -Destination $InstallDir -Force
+    Write-Host "==> wintun.dll を配置しました(TUNゲートウェイ用)"
+}
+
+# GPUバックエンド(--gpu feature、chacha20カーネル)に必要なDXILシェーダー。
+# zip同梱時のみコピー(未同梱でもCPUバックエンドへ安全にフォールバックする)。
+$ShadersSrc = Join-Path $PSScriptRoot "shaders"
+if (Test-Path $ShadersSrc) {
+    Copy-Item $ShadersSrc -Destination $InstallDir -Recurse -Force
+    Write-Host "==> shaders\ を配置しました(GPUバックエンド用、未配置時はCPUへ自動フォールバック)"
+}
+
 $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($existing) {
     Write-Host "==> 既存のWindowsサービスが見つかったため、バイナリのみ更新しました(再起動は行いません)"

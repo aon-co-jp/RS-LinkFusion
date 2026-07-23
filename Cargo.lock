@@ -2889,6 +2889,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
+name = "opencuda-core"
+version = "0.4.1"
+dependencies = [
+ "anyhow",
+ "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
+name = "opencuda-directx"
+version = "0.4.1"
+dependencies = [
+ "anyhow",
+ "opencuda-core",
+ "tracing",
+ "windows 0.58.0",
+]
+
+[[package]]
 name = "orbclient"
 version = "0.3.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3409,6 +3428,7 @@ dependencies = [
  "aggligator",
  "aggligator-transport-tcp",
  "anyhow",
+ "chacha20 0.9.1",
  "chacha20poly1305",
  "chrono",
  "clap",
@@ -3417,11 +3437,15 @@ dependencies = [
  "flate2",
  "ndt7-client",
  "network-interface",
+ "opencuda-core",
+ "opencuda-directx",
+ "poly1305",
  "rand 0.8.7",
  "rs-smarttcp",
  "serde",
  "serde_json",
  "simple-dns",
+ "subtle",
  "tokio",
  "toml",
  "tracing",

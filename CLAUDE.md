@@ -138,12 +138,34 @@ CPUバックエンドのみを実装。
 
 ## HANDOFF
 
-- **2026-07-23 GPU バックエンドの実装完了と今後の拡張方針**:
-  - `opencuda-directx`（DirectX 12）バックエンドを `AccelBackend::Gpu` に統合し、ChaCha20 暗号化を GPU オフロード可能にした。
-  - 実機検証の結果、GT730（DirectX 11.1 世代）では DirectX 12 非対応のため `backend=Cpu` にフォールバックすることが確認された。
-  - しかし、GT730 は Vulkan 1.0 に対応しているため、`opencuda-vulkan` バックエンドを追加することで GPU 加速が可能になる見込み。
-  - **今後の拡張ロードマップ**: Vulkan バックエンド対応を正式に検討する。具体的には `AccelBackend::Vulkan` を追加し、`opencuda-vulkan` の ChaCha20 カーネル（SPIR-V）を実装する。
-  - **現状の運用**: CPU フォールバック（`backend=Cpu`）で完全に動作するため、Vulkan 対応は必須ではないが、GT730 ユーザーのパフォーマンス向上に寄与する。
+- **2026-07-23 GPUバックエンドの実装完了・実機検証・セキュリティ修正**:
+  - `opencuda-directx`(DirectX 12 Compute)バックエンドを`AccelBackend::Gpu`
+    に統合し、ChaCha20暗号化をGPUオフロード可能にした(`--accel gpu`で
+    `serve`/`connect`/`gateway-serve`/`gateway-connect`全サブコマンドから
+    選択可能)。
+  - **訂正(このマシンでの実機検証結果に基づく)**: 一時、このHANDOFFに
+    「GT730はDirectX 12非対応のためCPUフォールバックする」という誤った
+    記述があったが、事実と異なる。**GT 730はDirectX 12に対応している
+    (Feature Level 11_0)**——`open-cuda`側のセッションで
+    `D3D12CreateDevice`の実機成功・DXGIアダプタ列挙での
+    `"NVIDIA GeForce GT 730"`取得・ChaCha20/matmul/vector_addの実GPU
+    ディスパッチとCPU参照実装との完全一致を複数のテストで検証済み
+    (詳細は`open-cuda`側`CLAUDE.md`のHANDOFF参照)。GT730が対応しない
+    のはDirectX 12の新しいFeature Level(12_x系、Ray Tracing等)であり、
+    「DirectX 12非対応」という表現は誤り。
+  - **実重大バグの発見・修正**: 当初のGPU実装は認証タグ(Poly1305)を
+    計算しておらず、GPUバックエンド選択時に改ざん検知が効かない
+    (`open()`が改ざんデータを受理してしまう)という実質的な脆弱性が
+    あった。RFC 8439のAEAD構成(counter=0ブロックからPoly1305一時鍵を
+    導出、実データはcounter=1から暗号化)をCPU側`poly1305`crateで
+    実装し、GPU(ChaCha20部分)と組み合わせることで解消。この構成が
+    `chacha20poly1305`crateの出力と完全一致することをテストで検証済み
+    (`gpu_poly1305_construction_matches_chacha20poly1305_reference`)。
+    GPUバックエンドでの改ざんフレーム拒否も実機で確認済み
+    (`gpu_backend_tampered_frame_is_rejected_if_available`)。
+  - Vulkanバックエンド追加は現時点で必須ではない(DirectX 12で
+    GT730含め動作確認済みのため)。将来的にmacOS/Linux/Android等
+    非Windows環境でGPU加速したい場合の選択肢として残る。
 
 - **2026-07-23(続き) TUNゲートウェイ・QoS・速度測定・GUI・自動再接続を
   追加(ユーザー指示、複数回にわたる追加要望を反映)**:
