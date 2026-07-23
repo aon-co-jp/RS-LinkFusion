@@ -85,6 +85,14 @@ rs-linkfusion serve --bind 0.0.0.0:5900 --target 127.0.0.1:8080 --key <上記の
 rs-linkfusion connect --listen 127.0.0.1:8080 --remote <serve側のホスト名/IP> --remote-port 5900 --key <同じ鍵>
 ```
 
+> **`open-web-server`との連携について(2026-07-24、実機検証済み)**:
+> `--target`を`open-web-server`のbindアドレス(例:
+> `OPEN_WEB_SERVER_BIND=127.0.0.1:18099`)に向けるだけで、追加のコード
+> 変更なしにボンディング経由でWebサーバーへ到達できることを、実プロセス
+> 3本(`open-web-server`+`rs-linkfusion serve`+`rs-linkfusion connect`)
+> でのcurl疎通により確認済み。詳細は本リポジトリの`CLAUDE.md`
+> (2026-07-24 HANDOFF)、および`open-web-server/PORTING.md` §4.12参照。
+
 ## 使用例(TUNゲートウェイ・フルVPNモード)
 
 管理者権限が必要。Windowsでは[wintun.dll](https://wintun.net/)を

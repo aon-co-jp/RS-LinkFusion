@@ -138,6 +138,33 @@ CPUバックエンドのみを実装。
 
 ## HANDOFF
 
+- **2026-07-24 open-web-serverとの連携を実機検証(結論: 追加のコード変更は
+  不要)**: `open-web-server`側からの要望「同一PCに両方インストールし、
+  複数回線をボンディングした上でWebサーバーを動かす」シナリオを検証。
+  `serve --bind 127.0.0.1:15900 --target 127.0.0.1:18099`(ボンディング
+  受け口、転送先を`open-web-server`のポートに設定)+
+  `connect --listen 127.0.0.1:15199 --remote 127.0.0.1 --remote-port
+  15900`(ボンディング接続元)を実際に起動し、`curl
+  http://127.0.0.1:15199/healthz`で`open-web-server`の`/healthz`へ複数回
+  疎通(3回連続`200 ok`)を実TCPソケット経由で確認した。`aggligator`側の
+  ログで実リンク確立、`open-web-server`側の`tracing`ログで実際に
+  `GET /healthz status=200`のリクエストが届いていることも確認済み——
+  モックではなく実プロセス3本での検証。**このリポジトリ側にも
+  `open-web-server`側にも追加のコード変更は不要**(`serve`/`target`は
+  単に既存のTCPサービスへ転送するだけで、対象アプリの種類を一切問わない
+  設計のため)。
+  **正直な限界**: 上記は`serve`/`connect`(TCPポートフォワードモード)
+  での検証であり、ユーザーが想定する本命シナリオである`gateway-serve`/
+  `gateway-connect`(TUN仮想アダプタ方式、OSレベルの全トラフィックを
+  ボンディングする)は、Windowsで`wintun.dll`+管理者権限が必要なため、
+  この開発環境(非管理者権限、`IsInRole(Administrator)=False`を確認済み)
+  では実機検証できなかった。ただし設計上は同様に動作するはず
+  (`open-web-server`は`OPEN_WEB_SERVER_BIND`でbindアドレスを外部注入
+  するだけでネットワークインターフェースに関知しない)。**次回、管理者
+  権限のある実機環境がある場合、`gateway-connect`で確立したTUN仮想
+  アダプタのIP(既定`10.66.0.2`)に`OPEN_WEB_SERVER_BIND`を向けて同様の
+  検証を行うこと**。
+
 - **2026-07-23 GPUバックエンドの実装完了・実機検証・セキュリティ修正**:
   - `opencuda-directx`(DirectX 12 Compute)バックエンドを`AccelBackend::Gpu`
     に統合し、ChaCha20暗号化をGPUオフロード可能にした(`--accel gpu`で
