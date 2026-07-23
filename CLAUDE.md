@@ -118,9 +118,23 @@ CPUバックエンドのみを実装。
 8. **次に優先すべきこと**: (a) タグpush(`v0.1.0`等)による
    `release.yml`の実動作確認、(b) 複数物理NIC・管理者権限を持つ実機
    でのTUNゲートウェイ・QoS・GUIの実機検証(本セッションはサンドボックス
-   の制約で未完了)、(c) GPU/NPUアクセラレーション(`open-cuda`側の
-   DirectX方針転換を待って着手、詳細は`open-cuda`のCLAUDE.md HANDOFF
-   参照)。
+   の制約で未完了)、(c) ~~GPU/NPUアクセラレーション~~
+   **`open-cuda`側でGPU実装候補が完成(2026-07-23、下記追記参照)**、
+   `accel.rs::AccelBackend::Gpu`への統合は次回セッションで着手。
+
+- **2026-07-23(続き) `open-cuda`側でGPU圧縮/暗号化カーネル(ChaCha20)の
+  実装が完了、`accel.rs::AccelBackend::Gpu`統合の実装候補ができた**:
+  `open-cuda`の`opencuda-directx`クレートにChaCha20 GPUカーネル
+  (DXIL/HLSL)が実装され、RustCrypto製`chacha20`クレートとの数値一致を
+  実機(NVIDIA GT 730)で検証済み(コミット`ec6acf1`、詳細は`open-cuda`
+  側CLAUDE.md HANDOFF参照)。**正直な開示・残作業**: (a) これは
+  ChaCha20暗号化部分のみで、`accel.rs`が使う完全なAEAD
+  (ChaCha20-Poly1305)には認証タグ(Poly1305)のGPU実装が別途必要、
+  (b) 小サイズペイロード(トンネルのMTU程度、数百〜数千バイト)での
+  H2D/D2Hオーバーヘッドが、GPU演算の優位性を相殺してしまわないかの
+  実ベンチマークが未実施、(c) 本リポジトリ側の`AccelBackend::Gpu`は
+  依然として`Cpu`へのフォールバックのみ(実際の配線はまだ行っていない)。
+  次回セッションでの着手事項として記録。
 
 ## HANDOFF
 
