@@ -93,5 +93,15 @@ tokio::try_join!(to_agg, to_local)?;
 
 **移植時の注意**：
 - GPU バックエンドを追加する場合、必ず `cfg(feature = "...")` で条件コンパイルし、フォールバック経路を用意してください。
-- DirectX 12 非対応 GPU（例：GT730）では、Vulkan バックエンドが代替候補になります。本エコシステムでは将来の拡張として Vulkan 対応を予定しています。
+- **訂正(2026-07-23、実機検証済み)**: 以前このファイルに「GT730はDirectX 12
+  非対応」という誤った記述があったが、事実と異なる。**GT730はDirectX 12に
+  対応している(Feature Level 11_0)**——`open-cuda`側`opencuda-directx`
+  クレートで`D3D12CreateDevice`の実機成功・DXGIアダプタ列挙での
+  `"NVIDIA GeForce GT 730"`取得・GPUディスパッチとCPU参照実装の完全一致を
+  複数のテストで検証済み(詳細は`open-cuda`側`CLAUDE.md`のHANDOFF参照)。
+  GT730が対応しないのはDirectX 12の新しいFeature Level(12_x系、Ray
+  Tracing等)であり、「DirectX 12非対応」という表現自体が誤り。
+  Vulkanバックエンドの追加は現時点で必須ではない(DirectX 12で
+  GT730を含め動作確認済みのため)——非Windows環境(Linux/Android等)で
+  GPU加速したい場合の選択肢として残る。
 ```
